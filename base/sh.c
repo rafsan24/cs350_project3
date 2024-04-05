@@ -83,14 +83,14 @@ runcmd(struct cmd *cmd)
   {
     struct redircmd *rcmd = (struct redircmd*)cmd;
     int fd;
-    int oldfd = rcmd->fd; // This is typically either 0 (stdin) or 1 (stdout).
+    int oldfd = rcmd->fd; 
 
     // Open the file with the specified mode.
     if(rcmd->mode == O_RDONLY) {
         // If the redirection is for input.
         fd = open(rcmd->file, rcmd->mode);
     } else {
-        // If the redirection is for output. Note: O_CREATE is used here assuming xv6 supports it for file creation.
+        // If the redirection is for output. 
         fd = open(rcmd->file, rcmd->mode | O_CREATE);
     }
 
@@ -104,7 +104,6 @@ runcmd(struct cmd *cmd)
         close(oldfd);
         int newfd = dup(fd);
         if(newfd != oldfd) {
-            // This should not happen since oldfd is expected to be the lowest-numbered unused file descriptor.
             printf(2, "unexpected file descriptor duplication: %d\n", newfd);
             exit();
         }
