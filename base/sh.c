@@ -61,7 +61,7 @@ runcmd(struct cmd *cmd)
   //struct backcmd *bcmd;
   struct execcmd *ecmd;
   //struct listcmd *lcmd;
-  //struct pipecmd *pcmd;
+  struct pipecmd *pcmd;
   struct redircmd *rcmd;
   
   if(cmd == 0)
@@ -122,7 +122,58 @@ runcmd(struct cmd *cmd)
     break;
 
   case PIPE:
-    printf(2, "Pipe Not implemented\n");
+    int pid;
+    int pfds[2];
+    pcmd = (struct pipecmd*)cmd;
+   
+    //create pipe
+    if(pipe(pfds) < 0) {
+      printf(2, "pipe failed\n");
+      exit();
+    }
+
+    pid = fork1();
+    if(pid == 0){    //in child
+
+      //redirect stdout to pipe
+      close(1);
+      dup(pfds[1]);
+      //close unused read end of pipe
+      close(pfds[0]);
+      // close dup pipe
+      close(pfds[1]);
+      //run cmd on left side of pipe
+      runcmd(pcmd->left);
+
+      //wait for all children to exit
+      //wait();
+
+    }
+
+    pid = fork1();
+    if(pid == 0){    //in child
+
+      //redirect stdin to pipe
+      close(0);
+      dup(pfds[0]);
+      //close dup read end of pipe
+      close(pfds[0]);
+      //close unused write end of pipe
+      close(pfds[1]);
+      //run command on right side of pipe
+      runcmd(pcmd->right); 
+     
+    }
+
+    //close pipe ends in parent
+    close(pfds[0]);
+    close(pfds[1]);
+
+    //wait for both children
+    wait();
+    wait();
+    
+    //printf(2, "Pipe Not implemented\n");
     break;
 
   case BACK:
