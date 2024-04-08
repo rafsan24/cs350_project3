@@ -3,6 +3,7 @@
 #include "types.h"
 #include "user.h"
 #include "fcntl.h"
+#include <stddef.h>
 
 // Parsed command representation
 #define EXEC  1
@@ -10,8 +11,12 @@
 #define PIPE  3
 #define LIST  4
 #define BACK  5
+#define HIST 6
 
 #define MAXARGS 10
+#define MAXHIST 10
+char *cmdHist[MAXHIST];
+int historyIndex = 0;
 
 struct cmd {
   int type;
@@ -49,6 +54,11 @@ struct backcmd {
   struct cmd *cmd;
 };
 
+struct histcmd {
+  int type;
+  struct cmd *arg;
+};
+
 int fork1(void);  // Fork but panics on failure.
 void panic(char*);
 struct cmd *parsecmd(char*);
@@ -58,11 +68,12 @@ void
 runcmd(struct cmd *cmd)
 {
   //int p[2];
-  //struct backcmd *bcmd;
+  struct backcmd *bcmd;
   struct execcmd *ecmd;
   struct listcmd *lcmd;
   struct pipecmd *pcmd;
   struct redircmd *rcmd;
+  struct histcmd *hcmd;
   
   if(cmd == 0)
     exit();
@@ -136,7 +147,7 @@ runcmd(struct cmd *cmd)
     break;
 
   case PIPE:
-    int pid;
+    // int pid;
     int pfds[2];
     pcmd = (struct pipecmd*)cmd;
    
@@ -193,8 +204,47 @@ runcmd(struct cmd *cmd)
   case BACK:
     printf(2, "Backgrounding not implemented\n");
     break;
+  case HIST:
+    hcmd = (struct histcmd *)cmd;
+    if (strcmp(hcmd-> arg, "print") == 0) {
+      int start = historyIndex - 1;
+      int count = 0;
+      for (int i = start; i >= 0 && count < MAXHIST; i--, count++) {
+        printf(2, "Previous command %d: %s", count + 1, cmdHist[i]);
+      }
+    } 
+    else {
+      int histNum = atoi(hcmd->arg);
+      if (histNum > 0 && histNum <= MAXHIST && (historyIndex - histNum) >= 0) {
+          int index = (historyIndex - histNum + MAXHIST) % MAXHIST;
+          char *cmdToRerun = cmdHist[index];
+          if (cmdToRerun != NULL) {
+              struct cmd *n_cmd = parsecmd(cmdToRerun);
+              runcmd(n_cmd);
+          }
+      }
+    }
+    break;
   }
+
   exit();
+}
+char *my_strdup(const char *src) { 
+  if (src == NULL)
+  {
+    return NULL;
+  }
+}
+
+void addToHistory(char* com) {
+  free(cmdHist[0]);
+  int count = 0;
+  while (count < MAXHIST - 1) {
+    cmdHist[count] = cmdHist[count + 1];
+    count++;
+  }
+
+  cmdHist[MAXHIST - 1] = my_strdup(com);
 }
 
 int
@@ -222,10 +272,23 @@ main(void)
     }
   }
 
+  memset(cmdHist, 0, sizeof(*cmdHist) * MAXHIST);
+
   // Read and run input commands.
   while(getcmd(buf, sizeof(buf)) >= 0){
-    if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' '){
-      // Chdir must be called by the parent, not the child.
+
+    if (!(buf[0] == 'h' && buf[1] == 'i' && buf[2] == 's' && buf[3] == 't' && (buf[4] == ' ' || buf[4] == '\0'))) {
+      int index = historyIndex % MAXHIST;
+      if (cmdHist[index] != NULL) 
+        addToHistory(buf);
+      else {
+        cmdHist[index] = my_strdup(buf);
+        historyIndex = historyIndex + 1;
+      }
+    }
+
+    if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' ') {
+      // Chdir must be `lled by the parent, not the child.
       buf[strlen(buf)-1] = 0;  // chop \n
       if(chdir(buf+3) < 0)
         printf(2, "cannot cd %s\n", buf+3);
@@ -323,6 +386,16 @@ backcmd(struct cmd *subcmd)
   cmd->cmd = subcmd;
   return (struct cmd*)cmd;
 }
+
+struct cmd*
+histcmd(struct cmd *subcmd) {
+  struct histcmd *cmd;
+  cmd = malloc(sizeof(*cmd));
+  memset(cmd, 0, sizeof(*cmd));
+  cmd->arg = subcmd;
+  cmd->type = HIST;
+  return (struct cmd *)cmd;
+}
 //PAGEBREAK!
 // Parsing
 
@@ -390,6 +463,7 @@ struct cmd *parseline(char**, char*);
 struct cmd *parsepipe(char**, char*);
 struct cmd *parseexec(char**, char*);
 struct cmd *nulterminate(struct cmd*);
+struct cmd *parsehist(char**, char*);
 
 struct cmd*
 parsecmd(char *s)
@@ -412,6 +486,21 @@ struct cmd*
 parseline(char **ps, char *es)
 {
   struct cmd *cmd;
+
+  char *q, *eq;
+  int token = gettoken(ps, es, &q, &eq);
+  if (token == "a") {
+    char first[eq - q + 1];
+    memmove(first, q, eq - q);
+    first[eq - q] = '\0';
+    if (strcmp(first, "hist") == 0) {
+      *ps = q;
+      cmd = parsehist(ps, es);
+      return cmd;
+    }
+  }
+  
+  *ps = q;
 
   cmd = parsepipe(ps, es);
   while(peek(ps, es, "&")){
@@ -512,6 +601,50 @@ parseexec(char **ps, char *es)
   return ret;
 }
 
+struct cmd *
+parsehist(char **ps, char *es) {
+  char *q, *eq;
+  int token;
+  struct histcmd *hcmd;
+
+  token = gettoken(ps, es, &q, &eq);
+  if (token == "a") {
+    char cmd[eq - q + 1];
+    memmove(cmd, q, eq - q);
+    cmd[eq - q] = "\0";
+
+    if (strcmp(cmd, "hist") == 0) {
+
+      token = gettoken(ps, es, &q, &eq);
+
+      if (token == "a") {
+        char arg[eq - q + 1];
+        memmove(arg, q, eq - q);
+        arg[eq - q] = "\0";
+        
+        if (strcmp(arg, "print") == 0) {
+          hcmd = malloc(sizeof(*hcmd));
+          hcmd->arg = malloc(strlen("print") + 1);
+          hcmd->type = HIST;
+          strcpy(hcmd->arg, "print");
+          return (struct cmd *)hcmd;
+        }
+        else {
+          int num = atoi(arg);
+          if (num > 0) {
+            hcmd = malloc(sizeof(*hcmd));
+            hcmd->arg = malloc(strlen(arg) + 1);
+            hcmd->type = HIST;
+            strcpy(hcmd->arg, arg);
+            return (struct cmd *)hcmd;
+          }
+        }
+      }
+    }
+  }
+  return NULL;
+}
+
 // NUL-terminate all the counted strings.
 struct cmd*
 nulterminate(struct cmd *cmd)
@@ -522,6 +655,7 @@ nulterminate(struct cmd *cmd)
   struct listcmd *lcmd;
   struct pipecmd *pcmd;
   struct redircmd *rcmd;
+  struct histcmd *hcmd;
 
   if(cmd == 0)
     return 0;
@@ -555,6 +689,12 @@ nulterminate(struct cmd *cmd)
     bcmd = (struct backcmd*)cmd;
     nulterminate(bcmd->cmd);
     break;
+  
+  case HIST:
+    hcmd = (struct histcmd *) cmd;
+    nulterminate(hcmd->arg);
+    break;
   }
+
   return cmd;
 }
